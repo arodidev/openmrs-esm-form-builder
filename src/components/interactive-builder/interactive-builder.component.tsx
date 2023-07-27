@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Accordion, AccordionItem, Button, InlineLoading } from "@carbon/react";
 import { Add, Edit, Replicate, TrashCan } from "@carbon/react/icons";
@@ -8,7 +8,12 @@ import {
   showNotification,
   openmrsFetch,
 } from "@openmrs/esm-framework";
-import { OHRIFormSchema } from "@openmrs/openmrs-form-engine-lib";
+import {
+  OHRIFormSchema,
+  isEmpty,
+  useDatatype,
+  evaluateFieldReadonlyProp,
+} from "@openmrs/openmrs-form-engine-lib";
 
 import type { RouteParams, Schema } from "../../types";
 import ActionButtons from "../action-buttons/action-buttons.component";
@@ -22,6 +27,7 @@ import NewFormModal from "./new-form-modal.component";
 import PageModal from "./page-modal.component";
 import SectionModal from "./section-modal.component";
 import styles from "./interactive-builder.scss";
+import { config } from "dotenv";
 
 type InteractiveBuilderProps = {
   isLoading: boolean;
@@ -49,7 +55,9 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
   const [showDeletePageModal, setShowDeletePageModal] = useState(false);
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteQuestionModal, setShowDeleteQuestionModal] = useState(false);
+  const [fullArray, setFullArray] = useState([])
   const [responses, setResponses] = useState([]);
+  const [conceptSet, setConceptSet] = useState<Set<string>>(new Set());
 
   const initializeSchema = useCallback(() => {
     const dummySchema: OHRIFormSchema = {
@@ -210,12 +218,15 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
   );
 
   const handleFormValidation = () => {
-    setResponses([])
-    
+    setResponses([]);
+    setFullArray([]);
+    setConceptSet(new Set());
+
     if (schema) {
       const parsedForm =
         typeof schema == "string" ? JSON.parse(schema) : schema;
 
+      //flattening the form and pulling concepts UUIDs
       for (let i = 0; i < parsedForm.pages.length; i++) {
         for (let j = 0; j < parsedForm.pages[i].sections.length; j++) {
           for (
@@ -224,35 +235,51 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
             k++
           ) {
             const questionObject = parsedForm.pages[i].sections[j].questions[k];
-            handleQuestionValidation(questionObject);
+
+            setFullArray(prevArray => [...prevArray, questionObject])
+
+            if (!questionObject.questionOptions.concept)
+              setResponses(prevState => [...prevState, {...questionObject, resolution: "No UUID"}])
+            // resolver(questionObject, "No UUID");
+
+            questionObject.questionOptions.concept &&
+              setConceptSet((conceptSet) =>
+                new Set(conceptSet).add(questionObject.questionOptions.concept)
+              );
           }
         }
       }
-    } else {
-      console.log("Empty form!");
+
+
     }
   };
 
-  const handleQuestionValidation = (conceptObject) => {
-    conceptObject.questionOptions.concept
-      ? openmrsFetch(
-        `/ws/rest/v1/concept/${conceptObject.questionOptions.concept}`
-      )
-        .then((response) => {
-          conceptObject.questionOptions.concept === response.data.uuid
-            ? dataTypeChecker(conceptObject, response)
-            : resolver(
-              conceptObject,
-              "response UUID doesn't match concept UUID"
-            );
-        })
-        .catch((error) => {
-          resolver(conceptObject, `Concept "${conceptObject.questionOptions.concept}" not found`);
-        })
-      : resolver(conceptObject, "No UUID");
-  };
+  // const handleQuestionValidation = (conceptObject) => {
+  //   conceptObject.questionOptions.concept
+  //     ? openmrsFetch(
+  //         `/ws/rest/v1/concept/${conceptObject.questionOptions.concept}`
+  //       )
+  //         .then((response) => {
+  //           conceptObject.questionOptions.concept === response.data.uuid
+  //             ? dataTypeChecker(response)
+  //             : resolver(
+  //                 conceptObject,
+  //                 "response UUID doesn't match concept UUID"
+  //               );
+  //         })
+  //         .catch((error) => {
+  //           resolver(
+  //             conceptObject,
+  //             `Concept "${conceptObject.questionOptions.concept}" not found`
+  //           );
+  //         })
+  //     : resolver(conceptObject, "No UUID");
+  // };
 
-  const dataTypeChecker = (conceptObject, responseObject) => {
+  const dataTypeChecker = (responseObject) => {
+    // //get the correponding question object
+   
+    // console.log("Results from the filter on data type checker: ",questionObjectsArray)
     const renderTypes = {
       Numeric: ["number", "fixed-value"],
       Coded: [
@@ -270,28 +297,33 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
       Rule: ["repeating", "group"],
     };
 
-    renderTypes.hasOwnProperty(responseObject.data.datatype.display) &&
-      renderTypes[responseObject.data.datatype.display].includes(
-        conceptObject.questionOptions.rendering
+    fullArray?.filter((item) => item.questionOptions.concept === responseObject.uuid).map((item)=>{
+      renderTypes.hasOwnProperty(responseObject.datatype.display) &&
+      renderTypes[responseObject.datatype.display].includes(
+        item.questionOptions.rendering
       ) &&
       resolver(
-        conceptObject,
-        `✅ ${conceptObject.questionOptions.concept}: datatype "${responseObject.data.datatype.display}" matches control type "${conceptObject.questionOptions.rendering}"`
+        item,
+        `✅ ${item.questionOptions.concept}: datatype "${responseObject.datatype.display}" matches control type "${item.questionOptions.rendering}"`
       );
 
-    renderTypes.hasOwnProperty(responseObject.data.datatype.display) &&
-      !renderTypes[responseObject.data.datatype.display].includes(
-        conceptObject.questionOptions.rendering
+      renderTypes.hasOwnProperty(responseObject.datatype.display) &&
+      !renderTypes[responseObject.datatype.display].includes(
+        item.questionOptions.rendering
       ) &&
       resolver(
-        conceptObject,
-        `❌ ${conceptObject.questionOptions.concept}: datatype "${responseObject.data.datatype.display}" doesn't match control type "${conceptObject.questionOptions.rendering}"`
+        item,
+        `❌ ${item.questionOptions.concept}: datatype "${responseObject.datatype.display}" doesn't match control type "${item.questionOptions.rendering}"`
       );
-    
-    !renderTypes.hasOwnProperty(responseObject.data.datatype.display) && 
-      resolver(conceptObject, `Untracked datatype ${responseObject.data.datatype.display}`)
 
-    console.log(responseObject.data);
+      !renderTypes.hasOwnProperty(responseObject.datatype.display) &&
+      resolver(
+        item,
+        `Untracked datatype ${responseObject.datatype.display}`
+      );
+    })
+
+    // console.log(responseObject.data);
   };
 
   const resolver = (questionObject, message) => {
@@ -301,7 +333,35 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
     ]);
   };
 
-  console.log(responses)
+  const { concepts, filteredSetArray } = useDatatype(conceptSet);
+
+  concepts?.length > 0 ? console.log("Concepts from the fetch: ",concepts) : console.log("no concepts");
+  filteredSetArray?.length > 0 ? console.log("filtered array from the set: ",filteredSetArray) : console.log("no filteredSet");
+
+  const unresolvedConceptsFunc = (fullArray, filteredSetArray) => {
+    const unresolvedConcepts = fullArray?.filter((fullArrayItem) =>{
+      return filteredSetArray?.some((setArrayItem)=> setArrayItem === fullArrayItem.questionOptions.concept)
+    })?.map((item)=>{
+      return {...item, resolution: "Concept not found"}
+    })
+    console.log("These are the unresolved concepts: ",unresolvedConcepts)
+    setResponses((prevState)=> [...prevState, ...unresolvedConcepts])
+  }
+
+  useEffect(()=>{
+    if(concepts?.length > 0){
+      unresolvedConceptsFunc(fullArray, filteredSetArray)
+      concepts.forEach((concept)=>{
+        dataTypeChecker(concept)
+      })
+    } 
+      
+  },[concepts])
+  
+  responses.length > 0
+      ? console.log(responses)
+      : console.log("responses is empty");
+  
   return (
     <div className={styles.container}>
       {isLoading ? (
@@ -474,223 +534,229 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
 
       {schema?.pages?.length
         ? schema.pages.map((page, pageIndex) => (
-          <div className={styles.editableFieldsContainer}>
-            <div style={{ display: "flex", alignItems: "center" }}>
-              <div className={styles.editorContainer}>
-                <EditableValue
-                  elementType="page"
-                  id="pageNameInput"
-                  value={schema.pages[pageIndex].label}
-                  onSave={(name) => renamePage(name, pageIndex)}
+            <div className={styles.editableFieldsContainer}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <div className={styles.editorContainer}>
+                  <EditableValue
+                    elementType="page"
+                    id="pageNameInput"
+                    value={schema.pages[pageIndex].label}
+                    onSave={(name) => renamePage(name, pageIndex)}
+                  />
+                </div>
+                <Button
+                  hasIconOnly
+                  enterDelayMs={200}
+                  iconDescription={t("deletePage", "Delete page")}
+                  kind="ghost"
+                  onClick={() => {
+                    setPageIndex(pageIndex);
+                    setShowDeletePageModal(true);
+                  }}
+                  renderIcon={(props) => <TrashCan size={16} {...props} />}
+                  size="sm"
                 />
               </div>
-              <Button
-                hasIconOnly
-                enterDelayMs={200}
-                iconDescription={t("deletePage", "Delete page")}
-                kind="ghost"
-                onClick={() => {
-                  setPageIndex(pageIndex);
-                  setShowDeletePageModal(true);
-                }}
-                renderIcon={(props) => <TrashCan size={16} {...props} />}
-                size="sm"
-              />
-            </div>
-            <div>
-              {page?.sections?.length ? (
-                <p className={styles.sectionExplainer}>
-                  {t(
-                    "expandSectionExplainer",
-                    "Below are the sections linked to this page. Expand each section to add questions to it."
-                  )}
-                </p>
-              ) : null}
-              {page?.sections?.length ? (
-                page.sections?.map((section, sectionIndex) => (
-                  <Accordion>
-                    <AccordionItem title={section.label}>
-                      <>
-                        <div
-                          style={{ display: "flex", alignItems: "center" }}
-                        >
-                          <div className={styles.editorContainer}>
-                            <EditableValue
-                              elementType="section"
-                              id="sectionNameInput"
-                              value={section.label}
-                              onSave={(name) =>
-                                renameSection(name, pageIndex, sectionIndex)
-                              }
+              <div>
+                {page?.sections?.length ? (
+                  <p className={styles.sectionExplainer}>
+                    {t(
+                      "expandSectionExplainer",
+                      "Below are the sections linked to this page. Expand each section to add questions to it."
+                    )}
+                  </p>
+                ) : null}
+                {page?.sections?.length ? (
+                  page.sections?.map((section, sectionIndex) => (
+                    <Accordion>
+                      <AccordionItem title={section.label}>
+                        <>
+                          <div
+                            style={{ display: "flex", alignItems: "center" }}
+                          >
+                            <div className={styles.editorContainer}>
+                              <EditableValue
+                                elementType="section"
+                                id="sectionNameInput"
+                                value={section.label}
+                                onSave={(name) =>
+                                  renameSection(name, pageIndex, sectionIndex)
+                                }
+                              />
+                            </div>
+                            <Button
+                              hasIconOnly
+                              enterDelayMs={200}
+                              iconDescription={t(
+                                "deleteSection",
+                                "Delete section"
+                              )}
+                              kind="ghost"
+                              onClick={() => {
+                                setPageIndex(pageIndex);
+                                setSectionIndex(sectionIndex);
+                                setShowDeleteSectionModal(true);
+                              }}
+                              renderIcon={(props) => (
+                                <TrashCan size={16} {...props} />
+                              )}
+                              size="sm"
                             />
                           </div>
-                          <Button
-                            hasIconOnly
-                            enterDelayMs={200}
-                            iconDescription={t(
-                              "deleteSection",
-                              "Delete section"
-                            )}
-                            kind="ghost"
-                            onClick={() => {
-                              setPageIndex(pageIndex);
-                              setSectionIndex(sectionIndex);
-                              setShowDeleteSectionModal(true);
-                            }}
-                            renderIcon={(props) => (
-                              <TrashCan size={16} {...props} />
-                            )}
-                            size="sm"
-                          />
-                        </div>
-                        <div>
-                          {section.questions?.length ? (
-                            section.questions.map(
-                              (question, questionIndex) => (
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <div className={styles.editorContainer}>
-                                    <p className={styles.questionLabel}>
-                                      {question.label}
-                                      <br />
-                                      <p
-                                        className={
-                                          responses
-                                            .find(
-                                              (item) =>
-                                                item.id === question.id
-                                            )
-                                            ?.resolution.includes("✅")
-                                            ? styles.approval
-                                            : styles.validationError
-                                        }
-                                      >
-                                        {
-                                          responses.find(
-                                            (item) => item.id === question.id
-                                          )?.resolution
-                                        }
-                                      </p>
-                                    </p>
-                                    <div className={styles.buttonContainer}>
+                          <div>
+                            {section.questions?.length ? (
+                              section.questions.map(
+                                (question, questionIndex) => (
+                                  // (question.type === "obsGroup") ?
+                                  //   question.questions.map((groupQuestion, index)=>{})
+                                  // : null
+                                  <>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                      }}
+                                    >
+                                      <div className={styles.editorContainer}>
+                                        <p className={styles.questionLabel}>
+                                          {question.label}
+                                          <br />
+                                          <p
+                                            className={
+                                              responses
+                                                .find(
+                                                  (item) =>
+                                                    item.id === question.id
+                                                )
+                                                ?.resolution.includes("✅")
+                                                ? styles.approval
+                                                : styles.validationError
+                                            }
+                                          >
+                                            {
+                                              responses.find(
+                                                (item) =>
+                                                  item.id === question.id
+                                              )?.resolution
+                                            }
+                                          </p>
+                                        </p>
+                                        <div className={styles.buttonContainer}>
+                                          <Button
+                                            kind="ghost"
+                                            size="sm"
+                                            enterDelayMs={200}
+                                            iconDescription={t(
+                                              "duplicateQuestion",
+                                              "Duplicate question"
+                                            )}
+                                            onClick={() =>
+                                              duplicateQuestion(
+                                                question,
+                                                pageIndex,
+                                                sectionIndex
+                                              )
+                                            }
+                                            renderIcon={(props) => (
+                                              <Replicate size={16} {...props} />
+                                            )}
+                                            hasIconOnly
+                                          />
+                                          <Button
+                                            kind="ghost"
+                                            size="sm"
+                                            enterDelayMs={200}
+                                            iconDescription={t(
+                                              "editQuestion",
+                                              "Edit question"
+                                            )}
+                                            onClick={() => {
+                                              editQuestion();
+                                              setPageIndex(pageIndex);
+                                              setSectionIndex(sectionIndex);
+                                              setQuestionIndex(questionIndex);
+                                              setQuestionToEdit(question);
+                                            }}
+                                            renderIcon={(props) => (
+                                              <Edit size={16} {...props} />
+                                            )}
+                                            hasIconOnly
+                                          />
+                                        </div>
+                                      </div>
                                       <Button
-                                        kind="ghost"
-                                        size="sm"
-                                        enterDelayMs={200}
-                                        iconDescription={t(
-                                          "duplicateQuestion",
-                                          "Duplicate question"
-                                        )}
-                                        onClick={() =>
-                                          duplicateQuestion(
-                                            question,
-                                            pageIndex,
-                                            sectionIndex
-                                          )
-                                        }
-                                        renderIcon={(props) => (
-                                          <Replicate size={16} {...props} />
-                                        )}
                                         hasIconOnly
-                                      />
-                                      <Button
-                                        kind="ghost"
-                                        size="sm"
                                         enterDelayMs={200}
                                         iconDescription={t(
-                                          "editQuestion",
-                                          "Edit question"
+                                          "deleteQuestion",
+                                          "Delete question"
                                         )}
+                                        kind="ghost"
                                         onClick={() => {
-                                          editQuestion();
                                           setPageIndex(pageIndex);
                                           setSectionIndex(sectionIndex);
                                           setQuestionIndex(questionIndex);
-                                          setQuestionToEdit(question);
+                                          setShowDeleteQuestionModal(true);
                                         }}
                                         renderIcon={(props) => (
-                                          <Edit size={16} {...props} />
+                                          <TrashCan size={16} {...props} />
                                         )}
-                                        hasIconOnly
+                                        size="sm"
                                       />
                                     </div>
-                                  </div>
-                                  <Button
-                                    hasIconOnly
-                                    enterDelayMs={200}
-                                    iconDescription={t(
-                                      "deleteQuestion",
-                                      "Delete question"
-                                    )}
-                                    kind="ghost"
-                                    onClick={() => {
-                                      setPageIndex(pageIndex);
-                                      setSectionIndex(sectionIndex);
-                                      setQuestionIndex(questionIndex);
-                                      setShowDeleteQuestionModal(true);
-                                    }}
-                                    renderIcon={(props) => (
-                                      <TrashCan size={16} {...props} />
-                                    )}
-                                    size="sm"
-                                  />
-                                </div>
+                                  </>
+                                )
                               )
-                            )
-                          ) : (
-                            <p className={styles.explainer}>
-                              {t(
-                                "sectionExplainer",
-                                "A section will typically contain one or more questions. Click the button below to add a question to this section."
-                              )}
-                            </p>
-                          )}
-                          <Button
-                            className={styles.addQuestionButton}
-                            kind="primary"
-                            renderIcon={Add}
-                            onClick={() => {
-                              addQuestion();
-                              setQuestionIndex(questionIndex);
-                              setPageIndex(pageIndex);
-                              setSectionIndex(sectionIndex);
-                            }}
-                            iconDescription={t("addQuestion", "Add Question")}
-                          >
-                            {t("addQuestion", "Add Question")}
-                          </Button>
-                        </div>
-                      </>
-                    </AccordionItem>
-                  </Accordion>
-                ))
-              ) : (
-                <p className={styles.explainer}>
-                  {t(
-                    "pageExplainer",
-                    "Pages typically have one or more sections. Click the button below to add a section to your page."
-                  )}
-                </p>
-              )}
+                            ) : (
+                              <p className={styles.explainer}>
+                                {t(
+                                  "sectionExplainer",
+                                  "A section will typically contain one or more questions. Click the button below to add a question to this section."
+                                )}
+                              </p>
+                            )}
+                            <Button
+                              className={styles.addQuestionButton}
+                              kind="primary"
+                              renderIcon={Add}
+                              onClick={() => {
+                                addQuestion();
+                                setQuestionIndex(questionIndex);
+                                setPageIndex(pageIndex);
+                                setSectionIndex(sectionIndex);
+                              }}
+                              iconDescription={t("addQuestion", "Add Question")}
+                            >
+                              {t("addQuestion", "Add Question")}
+                            </Button>
+                          </div>
+                        </>
+                      </AccordionItem>
+                    </Accordion>
+                  ))
+                ) : (
+                  <p className={styles.explainer}>
+                    {t(
+                      "pageExplainer",
+                      "Pages typically have one or more sections. Click the button below to add a section to your page."
+                    )}
+                  </p>
+                )}
+              </div>
+              <Button
+                className={styles.addSectionButton}
+                kind="primary"
+                renderIcon={Add}
+                onClick={() => {
+                  addSection();
+                  setPageIndex(pageIndex);
+                }}
+                iconDescription={t("addSection", "Add Section")}
+              >
+                {t("addSection", "Add Section")}
+              </Button>
             </div>
-            <Button
-              className={styles.addSectionButton}
-              kind="primary"
-              renderIcon={Add}
-              onClick={() => {
-                addSection();
-                setPageIndex(pageIndex);
-              }}
-              iconDescription={t("addSection", "Add Section")}
-            >
-              {t("addSection", "Add Section")}
-            </Button>
-          </div>
-        ))
+          ))
         : null}
     </div>
   );
