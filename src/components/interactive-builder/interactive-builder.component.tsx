@@ -342,7 +342,7 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
     const unresolvedConcepts = fullArray?.filter((fullArrayItem) =>{
       return filteredSetArray?.some((setArrayItem)=> setArrayItem === fullArrayItem.questionOptions.concept)
     })?.map((item)=>{
-      return {...item, resolution: "Concept not found"}
+      return {...item, resolution:  `Concept "${item.questionOptions.concept}" not found`}
     })
     console.log("These are the unresolved concepts: ",unresolvedConcepts)
     setResponses((prevState)=> [...prevState, ...unresolvedConcepts])
