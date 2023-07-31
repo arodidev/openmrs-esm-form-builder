@@ -249,37 +249,13 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
           }
         }
       }
-
-
     }
   };
 
-  // const handleQuestionValidation = (conceptObject) => {
-  //   conceptObject.questionOptions.concept
-  //     ? openmrsFetch(
-  //         `/ws/rest/v1/concept/${conceptObject.questionOptions.concept}`
-  //       )
-  //         .then((response) => {
-  //           conceptObject.questionOptions.concept === response.data.uuid
-  //             ? dataTypeChecker(response)
-  //             : resolver(
-  //                 conceptObject,
-  //                 "response UUID doesn't match concept UUID"
-  //               );
-  //         })
-  //         .catch((error) => {
-  //           resolver(
-  //             conceptObject,
-  //             `Concept "${conceptObject.questionOptions.concept}" not found`
-  //           );
-  //         })
-  //     : resolver(conceptObject, "No UUID");
-  // };
-
   const dataTypeChecker = (responseObject) => {
     // //get the correponding question object
-   
     // console.log("Results from the filter on data type checker: ",questionObjectsArray)
+
     const renderTypes = {
       Numeric: ["number", "fixed-value"],
       Coded: [
@@ -319,11 +295,10 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
       !renderTypes.hasOwnProperty(responseObject.datatype.display) &&
       resolver(
         item,
-        `Untracked datatype ${responseObject.datatype.display}`
+        `Untracked datatype "${responseObject.datatype.display}"`
       );
     })
 
-    // console.log(responseObject.data);
   };
 
   const resolver = (questionObject, message) => {
@@ -335,7 +310,7 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
 
   const { concepts, filteredSetArray } = useDatatype(conceptSet);
 
-  concepts?.length > 0 ? console.log("Concepts from the fetch: ",concepts) : console.log("no concepts");
+  concepts?.length > 0 ? console.log("Concepts from the fetch: ",concepts) : console.log("use datatype ran with empty set");
   filteredSetArray?.length > 0 ? console.log("filtered array from the set: ",filteredSetArray) : console.log("no filteredSet");
 
   const unresolvedConceptsFunc = (fullArray, filteredSetArray) => {
