@@ -40,12 +40,16 @@ type InteractiveBuilderProps = {
   isLoading: boolean;
   onSchemaChange: (schema: Schema) => void;
   schema: Schema;
+  isFormValidating;
+  setIsFormValidating;
 };
 
 const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
   isLoading,
   onSchemaChange,
   schema,
+  isFormValidating,
+  setIsFormValidating
 }) => {
   const mouseSensor = useSensor(MouseSensor, {
     activationConstraint: {
@@ -90,7 +94,10 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
           critical: true,
           description: "No errors found during form validation",
         });
-    })
+    }).then(
+      setIsFormValidating()
+    )
+    
   }
 
   const initializeSchema = useCallback(() => {
@@ -322,6 +329,9 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
       allQuestions={section.questions}
     />
   );
+
+  isFormValidating && validateForm()
+  
   return (
     <div className={styles.container}>
       {isLoading ? (
@@ -331,11 +341,7 @@ const InteractiveBuilder: React.FC<InteractiveBuilderProps> = ({
       ) : null}
       <div className={styles.validator}>
         <ActionButtons schema={schema} t={t} />
-        <Button
-          className = {styles.validateButton}
-          onClick={validateForm}>
-            Validate Form
-        </Button>
+        
       </div>
 
       {showNewFormModal ? (
